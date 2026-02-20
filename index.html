@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>WARIKAN - 割り勘アプリ</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{font-family:'Hiragino Sans','Yu Gothic',system-ui,sans-serif;background:#f0f7ff;min-height:100vh;}
+input,select,button{font-family:inherit;}
+input{-webkit-appearance:none;}
+select{-webkit-appearance:none;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useCallback,useRef,useMemo} = React;
+
+// ================================================================
+// ★ STEP1: ここをあなたのFirebase設定に書き換えてください ★
+// Firebase Console → プロジェクト設定 → マイアプリ → 設定コード
+// ================================================================
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAGxN2HRhN6loGVcajZpUBUQJhf1NZAbvE",
+  authDomain: "warikan-app-52192.firebaseapp.com",
+  databaseURL: "https://warikan-app-52192-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "warikan-app-52192",
+  storageBucket: "warikan-app-52192.firebasestorage.app",
+  messagingSenderId: "850691758776",
+  appId: "1:850691758776:web:dc9a3729034af0a20e324d",
+  measurementId: "G-Q280R5X2CQ"
+};
+// ================================================================
+
+// Firebase接続（設定が正しくない場合はlocalStorageで動作）
+let db = null;
+const FB_OK = FIREBASE_CONFIG.apiKey !== "AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+if(FB_OK){
+  try{ firebase.initializeApp(FIREBASE_CONFIG); db = firebase.database(); }
+  catch(e){ console.warn("Firebase error:", e); }
+}
+
+// データ保存・読み込み・リアルタイム同期
+const store = {
+  save(id, data){
+    try{ localStorage.setItem("wk_"+id, JSON.stringify(data)); }catch{}
+    if(db) db.ref("projects/"+id).set(data);
+  },
+  async load(id){
+    if(db){
+      try{
+        const snap = await db.ref("projects/"+id).once("value");
+        if(snap.val()) return snap.val();
+      }catch{}
+    }
+    try{ const v=localStorage.getItem("wk_"+id); if(v) return JSON.parse(v); }catch{}
+    return null;
+  },
+  listen(id, cb){
+    if(!db) return ()=>{};
+    const ref = db.ref("projects/"+id);
+    ref.on("value", snap=>{ if(snap.val()) cb(snap.val()); });
+    return ()=>ref.off();
+  }
+};
+
+// 翻訳
+const S={
+  ja:{appSub:"割り勘・費用精算アプリ",newProject:"新しいプロジェクト",newProjectSub:"プロジェクト名を入れてスタート",projectNamePH:"例：沖縄旅行、歓迎会 🎉",createBtn:"プロジェクト作成",orJoin:"または参加コードで入る",joinPH:"プロジェクトID（6文字）",joinBtn:"参加",shareTitle:"シェア・招待",copyLink:"IDをコピー",copied:"コピー済み ✓",offlineRates:"固定レート使用中",updated:(d)=>`${d} 更新`,settleLabel:"精算通貨",settleSub:"精算金額の表示通貨",tabM:"👥 メンバー",tabE:"💳 支出",tabR:"🧾 精算",membersTitle:(n)=>`メンバー（${n}人）`,addMember:"追加",memberPH:(i)=>`メンバー${i+1}`,memberTip:"💡 支出タブで立替者と対象者を設定し、精算タブで結果を確認できます。",expTitle:(n)=>`支出（${n}件）`,addExp:"追加",descPH:"内容（例: ランチ代、タクシー）",amtPH:"金額",paidBy:"支払った人",targets:"対象者",del:"削除",noExp:["💳","支出がありません","「追加」ボタンで記録してください"],totalSpent:"合計支出",equalSplit:"均等割",weightTitle:"重み付け精算",weightSub:"先輩が多め・ノンアル・途中退席など",weightTip:"倍率を設定（先輩 1.5、ノンアル 0.7、途中退席 0.5 など）",weightUnit:"倍",balTitle:"各メンバーの収支",txTitle:"送金指示",settled:["✓","精算済みです"],noData:["🧾","支出データがありません","「支出」タブで記録してください"],minMembers:"最低2人必要です",saving:"保存中…",saved:"同期済み ✓",savedLocal:"保存済み ✓",back:"← トップ",syncNote:"このIDを友達に送ればリアルタイムで一緒に編集できます",syncNoteLocal:"※Firebase未設定：このブラウザのみで保存されます",notFound:"プロジェクトが見つかりません",fetchingRates:"レート取得中…",connecting:"接続中…",dateLocale:"ja-JP",noFirebase:"⚠️ Firebase未設定（ローカルのみ）"},
+  en:{appSub:"Bill Splitting App",newProject:"New Project",newProjectSub:"Enter a project name to get started",projectNamePH:"e.g. Okinawa Trip, Welcome Party 🎉",createBtn:"Create Project",orJoin:"or join with a project ID",joinPH:"Project ID (6 chars)",joinBtn:"Join",shareTitle:"Share & Invite",copyLink:"Copy ID",copied:"Copied ✓",offlineRates:"Using fixed rates",updated:(d)=>`Updated ${d}`,settleLabel:"Settlement Currency",settleSub:"Currency for final amounts",tabM:"👥 Members",tabE:"💳 Expenses",tabR:"🧾 Result",membersTitle:(n)=>`Members (${n})`,addMember:"Add",memberPH:(i)=>`Member ${i+1}`,memberTip:"💡 Set payer & members in Expenses, then check Result.",expTitle:(n)=>`Expenses (${n})`,addExp:"Add",descPH:"Description (e.g. Lunch, Taxi)",amtPH:"Amount",paidBy:"Paid by",targets:"Split among",del:"Delete",noExp:["💳","No expenses yet",'Tap "Add" to record'],totalSpent:"Total Spent",equalSplit:"Equal split",weightTitle:"Weighted split",weightSub:"Seniority, non-drinkers, early leavers…",weightTip:"Multipliers: Senior 1.5, Non-drinker 0.7, Early leaver 0.5",weightUnit:"×",balTitle:"Individual balances",txTitle:"Payment instructions",settled:["✓","All settled!"],noData:["🧾","No expenses","Add expenses in the Expenses tab"],minMembers:"At least 2 members required",saving:"Saving…",saved:"Synced ✓",savedLocal:"Saved ✓",back:"← Home",syncNote:"Share this ID so friends can edit together in real-time",syncNoteLocal:"※Firebase not set: saved locally only",notFound:"Project not found",fetchingRates:"Fetching rates…",connecting:"Connecting…",dateLocale:"en-US",noFirebase:"⚠️ Firebase not configured (local only)"},
+};
+
+const CURR=[{code:"JPY",sym:"¥",ja:"日本円",en:"Japanese Yen"},{code:"USD",sym:"$",ja:"米ドル",en:"US Dollar"},{code:"EUR",sym:"€",ja:"ユーロ",en:"Euro"},{code:"GBP",sym:"£",ja:"英ポンド",en:"British Pound"},{code:"CNY",sym:"¥",ja:"中国元",en:"Chinese Yuan"},{code:"KRW",sym:"₩",ja:"韓国ウォン",en:"Korean Won"},{code:"THB",sym:"฿",ja:"タイバーツ",en:"Thai Baht"},{code:"TWD",sym:"NT$",ja:"台湾ドル",en:"Taiwan Dollar"},{code:"AUD",sym:"A$",ja:"豪ドル",en:"Australian Dollar"},{code:"SGD",sym:"S$",ja:"シンガポールドル",en:"Singapore Dollar"}];
+const FALLBACK={JPY:1,USD:0.00652,EUR:0.00550,GBP:0.00513,CNY:0.04730,KRW:9.30,THB:0.226,TWD:0.215,AUD:0.01020,SGD:0.00874};
+const fmt=(n,code)=>{const c=CURR.find(x=>x.code===code);return(c?c.sym:"")+Math.ceil(Math.abs(n)).toLocaleString();};
+const AV=[["#5ba4cf","#38b2ac"],["#f6a623","#f093a0"],["#68d391","#4fd1c5"],["#b794f4","#9f7aea"],["#fc8181","#f6ad55"],["#63b3ed","#76e4f7"]];
+const genId=()=>Math.random().toString(36).slice(2,8).toUpperCase();
+
+// ★ここ修正：settleは false ではなく通貨コードにする
+const newProj=(name)=>({
+  name,
+  members:[
+    {id:"m1",name:""},
+    {id:"m2",name:""},
+    {id:"m3",name:""}
+  ],
+  expenses:[],
+  weights:{m1:1,m2:1,m3:1},
+  settle:"JPY",
+  useW:false,
+  createdAt:Date.now()
+});
+
+const C={bg:"#f0f7ff",surface:"#fff",s2:"#f4f9ff",border:"#dbeafe",accent:"#4da6e8",accentDk:"#2b87cc",accentSoft:"#e8f4fd",text:"#1e3a5f",muted:"#7fa8c9",green:"#38a169",red:"#e53e3e",teal:"#2c9fa4"};
+const card={background:C.surface,border:`1px solid ${C.border}`,borderRadius:18,boxShadow:"0 2px 14px rgba(77,166,232,.09)"};
+const inner={background:C.s2,border:`1px solid ${C.border}`,borderRadius:12};
+const inp={background:C.s2,border:`1px solid ${C.border}`,borderRadius:12,color:C.text,padding:"13px 14px",fontSize:16,outline:"none",width:"100%",boxSizing:"border-box",WebkitAppearance:"none",display:"block"};
+const lbl={fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase",color:C.muted,fontWeight:600};
+const btnP={background:C.accent,color:"#fff",border:"none",borderRadius:14,padding:"14px 20px",fontSize:15,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 3px 12px rgba(77,166,232,.35)",width:"100%"};
+const btnSoft={background:C.accentSoft,color:C.accentDk,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 18px",fontSize:14,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6};
+const btnD={background:"transparent",color:C.red,border:"1px solid #fed7d7",borderRadius:10,padding:"10px 14px",fontSize:14,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6};
+const tagOn={background:C.accent,color:"#fff",border:"none",borderRadius:999,padding:"10px 18px",fontSize:14,cursor:"pointer",fontWeight:600};
+const tagOff={background:C.s2,color:C.muted,border:`1px solid ${C.border}`,borderRadius:999,padding:"10px 18px",fontSize:14,cursor:"pointer"};
+
+const PlusIco=()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>;
+const TrashIco=()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>;
+const ArrowIco=()=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>;
+const ShareIco=()=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>;
+const RefreshIco=()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>;
+
+const Avatar=({name,idx=0,size=34})=>{const[c1,c2]=AV[idx%AV.length];return <div style={{width:size,height:size,borderRadius:"50%",background:`linear-gradient(135deg,${c1},${c2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*.42,fontWeight:700,color:"#fff",flexShrink:0,userSelect:"none"}}>{(name||"?")[0].toUpperCase()}</div>;};
+const Toggle=({on,onChange,small=false})=><div onClick={()=>onChange(!on)} style={{width:small?38:46,height:small?22:26,background:on?"#4da6e8":"#cbd5e0",borderRadius:999,position:"relative",cursor:"pointer",transition:"background .2s",flexShrink:0}}><div style={{position:"absolute",top:small?2:3,left:small?2:3,width:small?18:20,height:small?18:20,background:"#fff",borderRadius:"50%",transition:"transform .2s",transform:on?`translateX(${small?16:20}px)`:"none",boxShadow:"0 1px 4px rgba(0,0,0,.25)"}}/></div>;
+
+// 日本語IMEバグ回避
+const MemberInput=({member,idx,onCommit,onDelete,placeholder})=>{
+  const ref=useRef(null);
+  useEffect(()=>{if(ref.current&&ref.current!==document.activeElement)ref.current.value=member.name;},[member.name]);
+  return(
+    <div style={{...card,padding:"12px 14px",display:"flex",alignItems:"center",gap:12}}>
+      <Avatar name={member.name||String(idx+1)} idx={idx} size={36}/>
+      <input ref={ref} type="text" defaultValue={member.name} placeholder={placeholder}
+        onBlur={e=>onCommit(member.id,e.target.value)}
+        onKeyDown={e=>e.key==="Enter"&&e.target.blur()}
+        style={{...inp,flex:1}}/>
+      <button style={{...btnD,padding:"10px"}} onClick={()=>onDelete(member.id)}><TrashIco/></button>
+    </div>
+  );
+};
+
+function App(){
+  const[lang,setLang]=useState("ja");
+  const t=useMemo(()=>S[lang],[lang]);
+  const[screen,setScreen]=useState("home");
+  const[pid,setPid]=useState(null);
+  const[proj,setProj]=useState(null);
+  const[saveStatus,setSaveStatus]=useState("saved");
+  const[rates,setRates]=useState(FALLBACK);
+  const[ratesInfo,setRatesInfo]=useState({loading:true,updatedAt:null});
+  const[tab,setTab]=useState("members");
+  const[copied,setCopied]=useState(false);
+  const[joinVal,setJoinVal]=useState("");
+  const[nameVal,setNameVal]=useState("");
+  const saveTimer=useRef(null);
+  const unsubRef=useRef(null);
+
+  // Firebase リアルタイム同期
+  useEffect(()=>{
+    if(!pid||screen!=="project")return;
+    const unsub=store.listen(pid,remote=>setProj(remote));
+    unsubRef.current=unsub;
+    return()=>{if(unsubRef.current)unsubRef.current();};
+  },[pid,screen]);
+
+  const mutate=useCallback((id,fn)=>{
+    setProj(prev=>{
+      const safePrev = prev || newProj("");
+      const next=fn(safePrev);
+      if(saveTimer.current)clearTimeout(saveTimer.current);
+      setSaveStatus("saving");
+      saveTimer.current=setTimeout(()=>{store.save(id,next);setSaveStatus("saved");},400);
+      return next;
+    });
+  },[]);
+
+  // 為替レート取得（Frankfurter / キー不要）
+  const fetchRates = useCallback(async () => {
+    setRatesInfo(p => ({ ...p, loading: true }));
+
+    try {
+      const symbols = ["USD","EUR","GBP","CNY","KRW","THB","TWD","AUD","SGD"].join(",");
+      const url = `https://api.frankfurter.app/latest?from=EUR&to=JPY,${symbols}`;
+
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`FX API error: ${r.status}`);
+      const data = await r.json();
+
+      const jpyPerEur = data.rates.JPY;
+      const nextRates = { JPY: 1 };
+
+      for (const c of ["USD","EUR","GBP","CNY","KRW","THB","TWD","AUD","SGD"]) {
+        if (c === "EUR") {
+          nextRates.EUR = 1 / jpyPerEur;
+        } else {
+          const cPerEur = data.rates[c];
+          if (!cPerEur) continue;
+          nextRates[c] = cPerEur / jpyPerEur;
+        }
+      }
+
+      setRates(nextRates);
+      setRatesInfo(p => ({
+        ...p,
+        loading: false,
+        updatedAt: new Date(),
+        ok: true,
+        source: "frankfurter",
+        error: ""
+      }));
+    } catch (e) {
+      // 失敗時はフォールバック
+      setRates(FALLBACK);
+      setRatesInfo(p => ({
+        ...p,
+        loading: false,
+        updatedAt: null,
+        ok: false,
+        source: "frankfurter",
+        error: String(e)
+      }));
+    }
+  }, []);
+
+  useEffect(()=>{fetchRates();},[]);
+
+  const createProject=async()=>{
+    if(!nameVal.trim())return;
+    const id=genId(),data=newProj(nameVal.trim());
+    store.save(id,data);
+    setPid(id);setProj(data);setScreen("project");setTab("members");
+  };
+  const joinProject=async(idArg)=>{
+    const id=(idArg||joinVal).trim().toUpperCase();if(!id)return;
+    const data=await store.load(id);
+    if(data){setPid(id);setProj(data);setScreen("project");setTab("members");}
+    else alert(t.notFound);
+  };
+
+  const commitName=(mid,name)=>mutate(pid,p=>({...p,members:(p.members||[]).map(m=>m.id===mid?{...m,name}:m)}));
+
+  const addMember=()=>{const id="m"+Date.now();mutate(pid,p=>({...p,members:[...(p.members||[]),{id,name:""}],weights:{...(p.weights||{}),[id]:1}}));};
+
+  // ★ここ修正：beneficiaries が無い支出があっても落ちない
+  const delMember=(mid)=>{
+    const members = proj?.members || [];
+    if(members.length<=2){alert(t.minMembers);return;}
+    mutate(pid,p=>({
+      ...p,
+      members:(p.members||[]).filter(m=>m.id!==mid),
+      expenses:(p.expenses||[]).map(e=>{
+        const bens = e.beneficiaries || [];
+        return {...e, beneficiaries: bens.filter(b=>b!==mid)};
+      })
+    }));
+  };
+
+  const addExpense=()=>{
+    const id="e"+Date.now();
+    mutate(pid,p=>{
+      const members = p.members || [];
+      const payer = members[0]?.id || "m1";
+      const all = members.map(m=>m.id);
+      return ({
+        ...p,
+        expenses:[...(p.expenses||[]),{id,desc:"",amount:"",currency:"JPY",paidBy:payer,beneficiaries:all}]
+      });
+    });
+  };
+
+  const delExpense=(id)=>mutate(pid,p=>({...p,expenses:(p.expenses||[]).filter(e=>e.id!==id)}));
+  const updExp=(id,k,v)=>mutate(pid,p=>({...p,expenses:(p.expenses||[]).map(e=>e.id===id?{...e,[k]:v}:e)}));
+
+  // ★ここ修正：includes/length を必ず配列に対して呼ぶ
+  const toggleB=(eid,mid)=>mutate(pid,p=>({
+    ...p,
+    expenses:(p.expenses||[]).map(e=>{
+      if(e.id!==eid) return e;
+      const bens = Array.isArray(e.beneficiaries) ? e.beneficiaries : [];
+      const has = bens.includes(mid);
+      if(has && bens.length===1) return e; // 最低1人は残す
+      return {
+        ...e,
+        beneficiaries: has ? bens.filter(b=>b!==mid) : [...bens, mid]
+      };
+    })
+  }));
+
+  const updSettle=(v)=>mutate(pid,p=>({...p,settle:v||"JPY"}));
+  const updUseW=(v)=>mutate(pid,p=>({...p,useW:v}));
+  const updWeight=(mid,v)=>mutate(pid,p=>({...p,weights:{...(p.weights||{}),[mid]:v}}));
+
+  const toJPY=(a,c)=>rates[c]?a/rates[c]:a;
+  const fromJPY=(j,c)=>rates[c]?j*rates[c]:j;
+
+  const calcBal=()=>{
+    if(!proj) return {};
+    const members = (proj.members || []);
+    const expenses = (proj.expenses || []);
+    const weights = (proj.weights || {});
+    const settle = proj.settle || "JPY";
+
+    const bal={};
+    members.forEach(m=>bal[m.id]=0);
+
+    expenses.forEach(exp=>{
+      const amt=parseFloat(exp.amount)||0;
+      if(!amt) return;
+
+      const bens = Array.isArray(exp.beneficiaries) ? exp.beneficiaries : [];
+      if(bens.length===0) return;
+
+      const jpy=toJPY(amt,exp.currency);
+      const bms=members.filter(m=>bens.includes(m.id));
+      if(bms.length===0) return;
+
+      if(proj.useW){
+        const tw=bms.reduce((s,m)=>s+(parseFloat(weights[m.id])||1),0);
+        bms.forEach(m=>{ bal[m.id]-=jpy*((parseFloat(weights[m.id])||1)/tw); });
+      }else{
+        bms.forEach(m=>{ bal[m.id]-=jpy/bms.length; });
+      }
+
+      const payer = exp.paidBy || (members[0] ? members[0].id : null);
+      if(payer){
+        if(bal[payer]===undefined) bal[payer]=0;
+        bal[payer]+=jpy;
+      }
+    });
+
+    const res={};
+    members.forEach(m=>{ res[m.id]=fromJPY(bal[m.id]||0,settle); });
+    return res;
+  };
+
+  const calcTx=(bal)=>{
+    const members = proj?.members || [];
+    const tx=[];
+    const cs=members.filter(m=>(bal[m.id]||0)>0.5).map(m=>({...m,b:bal[m.id]})).sort((a,z)=>z.b-a.b);
+    const ds=members.filter(m=>(bal[m.id]||0)<-0.5).map(m=>({...m,b:-(bal[m.id]||0)})).sort((a,z)=>z.b-a.b);
+    const c=cs.map(x=>({...x})),d=ds.map(x=>({...x}));
+    let i=0,j=0;
+    while(i<c.length&&j<d.length){
+      const a=Math.min(c[i].b,d[j].b);
+      tx.push({from:d[j],to:c[i],amount:a});
+      c[i].b-=a; d[j].b-=a;
+      if(c[i].b<0.5)i++;
+      if(d[j].b<0.5)j++;
+    }
+    return tx;
+  };
+
+  const memIdx=id=>proj?.members?.findIndex(m=>m.id===id)??0;
+
+  const chips=["USD","EUR","GBP","CNY","KRW"].filter(c=>rates[c]).map(c=>({c,label:`1${CURR.find(x=>x.code===c).sym}=¥${Math.round(1/rates[c]).toLocaleString()}`}));
+
+  const copyId=()=>{try{navigator.clipboard.writeText(pid);}catch{}setCopied(true);setTimeout(()=>setCopied(false),2500);};
+
+  const LangToggle=()=>(
+    <div style={{display:"inline-flex",alignItems:"center",gap:8,background:C.surface,border:`1px solid ${C.border}`,borderRadius:999,padding:"6px 14px"}}>
+      <span style={{fontSize:13,fontWeight:lang==="ja"?700:400,color:lang==="ja"?C.accentDk:C.muted,cursor:"pointer"}} onClick={()=>setLang("ja")}>日本語</span>
+      <Toggle on={lang==="en"} onChange={v=>setLang(v?"en":"ja")} small/>
+      <span style={{fontSize:13,fontWeight:lang==="en"?700:400,color:lang==="en"?C.accentDk:C.muted,cursor:"pointer"}} onClick={()=>setLang("en")}>EN</span>
+    </div>
+  );
+
+  const tabBtn=(key,label)=><button key={key} onClick={()=>setTab(key)} style={{flex:1,padding:"13px 4px",borderRadius:12,border:"none",fontSize:14,fontWeight:700,transition:"all .2s",background:tab===key?C.accent:C.s2,color:tab===key?"#fff":C.muted,boxShadow:tab===key?"0 3px 10px rgba(77,166,232,.3)":"none",cursor:"pointer"}}>{label}</button>;
+
+  // ── ホーム画面 ──
+  if(screen==="home") return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
+      <div style={{position:"fixed",top:"-10%",right:"-5%",width:300,height:300,borderRadius:"50%",background:"radial-gradient(circle,rgba(77,166,232,.12),transparent 70%)",pointerEvents:"none"}}/>
+      <div style={{position:"fixed",bottom:"-5%",left:"-5%",width:240,height:240,borderRadius:"50%",background:"radial-gradient(circle,rgba(56,178,172,.1),transparent 70%)",pointerEvents:"none"}}/>
+      <div style={{width:"100%",maxWidth:400,position:"relative",zIndex:1}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{width:80,height:80,borderRadius:26,background:`linear-gradient(135deg,${C.accent},${C.teal})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:38,margin:"0 auto 16px",boxShadow:"0 8px 24px rgba(77,166,232,.3)"}}>🧮</div>
+          <h1 style={{fontSize:32,fontWeight:900,color:C.text,letterSpacing:"-.02em",marginBottom:6}}>WARIKAN</h1>
+          <p style={{fontSize:14,color:C.muted,marginBottom:4}}>{t.appSub}</p>
+          {!FB_OK&&<p style={{fontSize:11,color:C.red,marginBottom:14,background:"#fff5f5",border:"1px solid #fed7d7",borderRadius:8,padding:"4px 10px",display:"inline-block"}}>{t.noFirebase}</p>}
+          {FB_OK&&<p style={{fontSize:11,color:C.green,marginBottom:14,background:"#f0fff4",border:"1px solid #c6f6d5",borderRadius:8,padding:"4px 10px",display:"inline-block"}}>🔥 Firebase接続済み・リアルタイム共有対応</p>}
+          <div style={{marginTop:8}}><LangToggle/></div>
+        </div>
+        <div style={{...card,padding:24,marginBottom:14}}>
+          <p style={{fontSize:18,fontWeight:800,color:C.text,marginBottom:4}}>{t.newProject}</p>
+          <p style={{fontSize:13,color:C.muted,marginBottom:18}}>{t.newProjectSub}</p>
+          <input type="text" value={nameVal} onChange={e=>setNameVal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&createProject()} placeholder={t.projectNamePH} style={{...inp,marginBottom:14}}/>
+          <button style={btnP} onClick={createProject}><PlusIco/> {t.createBtn}</button>
+        </div>
+        <div style={{...card,padding:22}}>
+          <p style={{fontSize:14,color:C.muted,marginBottom:14}}>{t.orJoin}</p>
+          <div style={{display:"flex",gap:10}}>
+            <input type="text" value={joinVal} onChange={e=>setJoinVal(e.target.value.toUpperCase())} onKeyDown={e=>e.key==="Enter"&&joinProject()} placeholder={t.joinPH} style={{...inp,flex:1,letterSpacing:"0.12em",fontFamily:"monospace",fontWeight:700}}/>
+            <button style={{...btnSoft,flexShrink:0}} onClick={()=>joinProject()}>{t.joinBtn}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  if(!proj)return<div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:16}}>{t.connecting}</div>;
+
+  const bal=calcBal(),txs=calcTx(bal);
+  const expensesSafe = proj.expenses || [];
+  const membersSafe = proj.members || [];
+  const settleSafe = proj.settle || "JPY";
+  const total = expensesSafe.reduce((s,e)=>s+fromJPY(toJPY(parseFloat(e.amount)||0,e.currency),settleSafe),0);
+
+  // ── プロジェクト画面 ──
+  return(
+    <div style={{minHeight:"100vh",background:C.bg}}>
+      <div style={{position:"fixed",top:"-10%",right:"-5%",width:280,height:280,borderRadius:"50%",background:"radial-gradient(circle,rgba(77,166,232,.1),transparent 70%)",pointerEvents:"none",zIndex:0}}/>
+      <div style={{maxWidth:600,margin:"0 auto",padding:"0 16px 48px",position:"relative",zIndex:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 0 10px"}}>
+          <button onClick={()=>setScreen("home")} style={{background:"none",border:"none",color:C.muted,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:"8px 0"}}>{t.back}</button>
+          <div style={{flex:1}}/>
+          <LangToggle/>
+        </div>
+
+        <div style={{...card,padding:"18px 20px",marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10,marginBottom:14}}>
+            <div><p style={{...lbl,marginBottom:4}}>{t.appSub}</p><h2 style={{fontSize:22,fontWeight:800,color:C.text,lineHeight:1.2}}>{proj.name}</h2></div>
+            <p style={{fontSize:11,color:saveStatus==="saving"?C.accent:C.green,fontFamily:"monospace",flexShrink:0,marginTop:4,fontWeight:700}}>{saveStatus==="saving"?t.saving:(FB_OK?t.saved:t.savedLocal)}</p>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
+            <button onClick={fetchRates} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:4,display:"flex",alignItems:"center"}}><RefreshIco/></button>
+            {ratesInfo.loading?<span style={{fontSize:11,color:C.muted}}>{t.fetchingRates}</span>:chips.map(r=><span key={r.c} style={{background:C.accentSoft,border:`1px solid ${C.border}`,borderRadius:8,padding:"3px 9px",fontSize:11,color:C.accentDk,fontFamily:"monospace",fontWeight:600}}>{r.label}</span>)}
+            {!ratesInfo.loading&&<span style={{fontSize:10,color:ratesInfo.updatedAt?C.muted:C.red,fontFamily:"monospace",marginLeft:"auto"}}>{ratesInfo.updatedAt?t.updated(ratesInfo.updatedAt.toLocaleDateString(t.dateLocale)):t.offlineRates}</span>}
+          </div>
+          <div style={{padding:"14px 16px",background:C.accentSoft,borderRadius:14,border:`1px solid ${C.border}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}><ShareIco/><p style={{fontSize:14,fontWeight:700,color:C.accentDk}}>{t.shareTitle}</p></div>
+            <p style={{fontSize:12,color:C.muted,marginBottom:10}}>{FB_OK?t.syncNote:t.syncNoteLocal}</p>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",fontFamily:"monospace",fontSize:20,fontWeight:800,color:C.text,letterSpacing:"0.18em"}}>{pid}</div>
+              <button style={{...btnSoft,flexShrink:0,padding:"12px 16px"}} onClick={copyId}>{copied?"✓":t.copyLink}</button>
+            </div>
+          </div>
+        </div>
+
+        <div style={{...card,padding:14,marginBottom:12,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <div style={{flex:1}}><p style={{...lbl,marginBottom:2}}>{t.settleLabel}</p><p style={{fontSize:12,color:C.muted}}>{t.settleSub}</p></div>
+          <select value={settleSafe} onChange={e=>updSettle(e.target.value)} style={{...inp,width:"auto",minWidth:165}}>
+            {CURR.map(c=><option key={c.code} value={c.code}>{c.sym} {lang==="ja"?c.ja:c.en}</option>)}
+          </select>
+        </div>
+
+        <div style={{display:"flex",gap:6,marginBottom:14,background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,padding:6}}>
+          {tabBtn("members",t.tabM)}{tabBtn("expenses",t.tabE)}
+          <button onClick={()=>setTab("result")} style={{flex:1,padding:"13px 4px",borderRadius:12,border:"none",fontSize:14,fontWeight:700,transition:"all .2s",background:tab==="result"?C.accent:C.s2,color:tab==="result"?"#fff":C.muted,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+            {t.tabR}{txs.length>0&&tab!=="result"&&<span style={{background:"rgba(255,255,255,.35)",borderRadius:999,padding:"1px 7px",fontSize:11}}>{txs.length}</span>}
+          </button>
+        </div>
+
+        {tab==="members"&&<div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <p style={lbl}>{t.membersTitle(membersSafe.length)}</p>
+            <button style={btnSoft} onClick={addMember}><PlusIco/> {t.addMember}</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {membersSafe.map((m,i)=><MemberInput key={m.id} member={m} idx={i} onCommit={commitName} onDelete={delMember} placeholder={t.memberPH(i)}/>)}
+          </div>
+          <div style={{marginTop:14,padding:14,borderRadius:12,background:C.accentSoft,border:`1px solid ${C.border}`}}>
+            <p style={{fontSize:13,color:C.accentDk,lineHeight:1.7}}>{t.memberTip}</p>
+          </div>
+        </div>}
+
+        {tab==="expenses"&&<div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <p style={lbl}>{t.expTitle(expensesSafe.length)}</p>
+            <button style={btnSoft} onClick={addExpense}><PlusIco/> {t.addExp}</button>
+          </div>
+          {expensesSafe.length===0&&<div style={{textAlign:"center",padding:"48px 20px",color:C.muted}}><p style={{fontSize:40,marginBottom:12}}>{t.noExp[0]}</p><p style={{fontSize:16,marginBottom:6,color:C.text}}>{t.noExp[1]}</p><p style={{fontSize:13}}>{t.noExp[2]}</p></div>}
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            {expensesSafe.map(exp=>{
+              const bens = Array.isArray(exp.beneficiaries) ? exp.beneficiaries : [];
+              return (
+              <div key={exp.id} style={{...card,padding:18}}>
+                <input type="text" value={exp.desc} onChange={e=>updExp(exp.id,"desc",e.target.value)} placeholder={t.descPH} style={{...inp,marginBottom:12}}/>
+                <div style={{display:"flex",gap:10,marginBottom:6}}>
+                  <input type="text" inputMode="decimal" value={exp.amount} onChange={e=>{let v=e.target.value.replace(/[^\d.]/g,"");if(/^0\d/.test(v))v=v.replace(/^0+/,"");updExp(exp.id,"amount",v);}} placeholder={t.amtPH} style={{...inp,flex:1}}/>
+                  <select value={exp.currency} onChange={e=>updExp(exp.id,"currency",e.target.value)} style={{...inp,width:90,flexShrink:0}}>
+                    {CURR.map(c=><option key={c.code} value={c.code}>{c.code}</option>)}
+                  </select>
+                </div>
+                {exp.currency!=="JPY"&&parseFloat(exp.amount)>0&&<p style={{fontSize:12,color:C.muted,marginBottom:12,fontFamily:"monospace"}}>≈{fmt(toJPY(parseFloat(exp.amount),exp.currency),"JPY")}</p>}
+                <p style={{...lbl,marginBottom:8}}>{t.paidBy}</p>
+                <select value={exp.paidBy} onChange={e=>updExp(exp.id,"paidBy",e.target.value)} style={{...inp,marginBottom:14}}>
+                  {membersSafe.map((m,i)=><option key={m.id} value={m.id}>{m.name||t.memberPH(i)}</option>)}
+                </select>
+                <p style={{...lbl,marginBottom:10}}>{t.targets}</p>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+                  {membersSafe.map((m,i)=><button key={m.id} onClick={()=>toggleB(exp.id,m.id)} style={bens.includes(m.id)?tagOn:tagOff}>{m.name||t.memberPH(i)}</button>)}
+                </div>
+                <div style={{height:1,background:C.border,marginBottom:12}}/>
+                <button style={btnD} onClick={()=>delExpense(exp.id)}><TrashIco/> {t.del}</button>
+              </div>
+            )})}
+          </div>
+        </div>}
+
+        {tab==="result"&&<div>
+          {expensesSafe.length===0?<div style={{textAlign:"center",padding:"48px 20px",color:C.muted}}><p style={{fontSize:40,marginBottom:12}}>{t.noData[0]}</p><p style={{fontSize:16,marginBottom:6,color:C.text}}>{t.noData[1]}</p><p style={{fontSize:13}}>{t.noData[2]}</p></div>:<>
+            <div style={{...card,padding:22,marginBottom:14,background:`linear-gradient(135deg,${C.accent},${C.teal})`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><p style={{...lbl,color:"rgba(255,255,255,.75)",marginBottom:6}}>{t.totalSpent}</p><p style={{fontSize:34,fontWeight:900,color:"#fff"}}>{fmt(total,settleSafe)}</p></div>
+                <div style={{textAlign:"right"}}><p style={{...lbl,color:"rgba(255,255,255,.75)",marginBottom:6}}>{t.equalSplit}</p><p style={{fontSize:22,fontWeight:700,color:"#fff",fontFamily:"monospace"}}>{fmt(total/(membersSafe.length||1),settleSafe)}</p></div>
+              </div>
+            </div>
+
+            <div style={{...card,padding:18,marginBottom:14}}>
+              <p style={{...lbl,marginBottom:14}}>{t.balTitle}</p>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {membersSafe.map(m=>{
+                  const b=bal[m.id]||0;
+                  const color=b>0.5?C.green:b<-0.5?C.red:C.muted;
+                  const bg=b>0.5?"#f0fff4":b<-0.5?"#fff5f5":C.s2;
+                  return(
+                    <div key={m.id} style={{padding:"14px 16px",background:bg,borderRadius:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:12}}>
+                        <Avatar name={m.name} idx={memIdx(m.id)} size={34}/>
+                        <span style={{fontSize:15,fontWeight:600,color:C.text}}>{m.name||"?"}</span>
+                      </div>
+                      <span style={{fontFamily:"monospace",fontSize:18,fontWeight:800,color}}>
+                        {b>0.5?"+":b<-0.5?"-":""}{fmt(Math.abs(b),settleSafe)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{...card,padding:18}}>
+              <p style={{...lbl,marginBottom:14}}>{t.txTitle}</p>
+              {txs.length===0
+                ? <div style={{textAlign:"center",padding:24,color:C.green}}><p style={{fontSize:28,marginBottom:8}}>{t.settled[0]}</p><p style={{fontSize:14}}>{t.settled[1]}</p></div>
+                : <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {txs.map((tx,i)=>(
+                      <div key={i} style={{background:"#f0fff4",border:"1px solid #c6f6d5",borderLeft:`4px solid ${C.green}`,borderRadius:14,padding:"14px 18px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                        <Avatar name={tx.from.name} idx={memIdx(tx.from.id)} size={34}/>
+                        <span style={{fontSize:15,fontWeight:700,color:C.text}}>{tx.from.name}</span>
+                        <ArrowIco/>
+                        <Avatar name={tx.to.name} idx={memIdx(tx.to.id)} size={34}/>
+                        <span style={{fontSize:15,fontWeight:700,color:C.text}}>{tx.to.name}</span>
+                        <span style={{marginLeft:"auto",fontFamily:"monospace",fontSize:19,fontWeight:800,color:C.green}}>{fmt(tx.amount,settleSafe)}</span>
+                      </div>
+                    ))}
+                  </div>
+              }
+            </div>
+          </>}
+        </div>}
+
+        <p style={{textAlign:"center",marginTop:32,color:C.muted,fontSize:11,fontFamily:"monospace"}}>
+          WARIKAN {FB_OK?"· 🔥 Firebase Realtime Sync":"· ローカル保存モード"} · {ratesInfo.updatedAt?`rates ${ratesInfo.updatedAt.toLocaleDateString(t.dateLocale)}`:"offline rates"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
