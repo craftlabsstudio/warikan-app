@@ -371,7 +371,6 @@ function App(){
           <h1 style={{fontSize:32,fontWeight:900,color:C.text,letterSpacing:"-.02em",marginBottom:6}}>WARIKAN</h1>
           <p style={{fontSize:14,color:C.muted,marginBottom:4}}>{t.appSub}</p>
           {!FB_OK&&<p style={{fontSize:11,color:C.red,marginBottom:14,background:"#fff5f5",border:"1px solid #fed7d7",borderRadius:8,padding:"4px 10px",display:"inline-block"}}>{t.noFirebase}</p>}
-          {FB_OK&&<p style={{fontSize:11,color:C.green,marginBottom:14,background:"#f0fff4",border:"1px solid #c6f6d5",borderRadius:8,padding:"4px 10px",display:"inline-block"}}>🔥 Firebase接続済み・リアルタイム共有対応</p>}
           <div style={{marginTop:8}}><LangToggle/></div>
         </div>
         <div style={{...card,padding:24,marginBottom:14}}>
